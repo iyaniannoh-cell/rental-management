@@ -1,185 +1,134 @@
-"use client";
-
-import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
 import Logo from "@/components/Logo";
 
-export default function SignUpPage() {
-  const router = useRouter();
-
-  const [role, setRole] = useState<"landlord" | "tenant">("tenant");
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [phone, setPhone] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-
-  const isExistingAccount =
-    errorMsg.toLowerCase().includes("already exists") ||
-    errorMsg.toLowerCase().includes("please log in");
-
-  const handleSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrorMsg("");
-
-    try {
-      // 1. Call our custom server API route
-      const res = await fetch("/api/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, fullName, phone, role }),
-      });
-
-      const result = await res.json();
-      if (!res.ok) {
-        throw new Error(result.error || "Signup failed.");
-      }
-
-      // 2. Auto sign in
-      const { error: loginError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (loginError) throw loginError;
-
-      alert(`Account created successfully as a ${role.toUpperCase()}!`);
-      router.push(role === "landlord" ? "/dashboard/landlord" : "/dashboard/tenant");
-    } catch (err: any) {
-      setErrorMsg(err.message || "Failed to create account.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+export default function Home() {
   return (
-    <main className="min-h-screen bg-slate-950 text-white flex flex-col justify-center items-center px-4 py-12">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl space-y-6">
-        <div className="text-center">
-          <div className="flex justify-center mb-4">
-            <Link href="/">
-              <Logo size="sm" />
+    <main className="min-h-screen bg-slate-950 text-white flex flex-col justify-between relative overflow-hidden selection:bg-emerald-500 selection:text-slate-950">
+      
+      {/* AUTHENTIC KENYAN FLAG BACKGROUND BANNER & GLOW */}
+      <div className="absolute top-0 left-0 right-0 z-0 pointer-events-none flex flex-col items-center">
+        {/* Kenyan Flag Strip */}
+        <div className="w-full flex flex-col shadow-2xl opacity-40">
+          <div className="h-3 w-full bg-black"></div>
+          <div className="h-0.5 w-full bg-white"></div>
+          <div className="h-3 w-full bg-[#B20000]"></div>
+          <div className="h-0.5 w-full bg-white"></div>
+          <div className="h-3 w-full bg-[#006600]"></div>
+        </div>
+        {/* Ambient Glows */}
+        <div className="absolute top-4 w-[600px] h-[250px] bg-gradient-to-r from-emerald-600/20 via-[#B20000]/25 to-emerald-600/20 blur-3xl rounded-full"></div>
+      </div>
+
+      {/* Top Header */}
+      <header className="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md px-6 py-4 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <Link href="/">
+            <Logo size="md" />
+          </Link>
+          <div className="flex items-center space-x-3 sm:space-x-4">
+            <Link
+              href="/login"
+              className="text-sm font-medium text-slate-300 hover:text-white transition px-3 py-2 rounded-lg"
+            >
+              Sign In
+            </Link>
+            <Link
+              href="/signup"
+              className="text-sm font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-4 py-2 rounded-xl transition shadow-lg shadow-emerald-500/20"
+            >
+              Get Started Free
             </Link>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">Create Your Account</h1>
-          <p className="text-slate-400 text-xs mt-1">Join eBoma to manage or find your keja</p>
+        </div>
+      </header>
+
+      {/* Hero Section */}
+      <div className="max-w-6xl mx-auto px-6 py-16 text-center flex flex-col items-center relative z-10">
+        {/* Kenyan Flag Badge */}
+        <div className="inline-flex items-center space-x-2.5 bg-slate-900 border border-slate-700 text-white text-xs font-semibold px-4 py-1.5 rounded-full mb-8 shadow-xl">
+          <span className="flex h-2.5 w-4 rounded-sm overflow-hidden flex-col shadow-sm">
+            <span className="h-1/3 bg-black"></span>
+            <span className="h-1/3 bg-[#B20000]"></span>
+            <span className="h-1/3 bg-[#006600]"></span>
+          </span>
+          <span className="text-emerald-400 font-bold">Kenya's Smart Rental Management & House Discovery</span>
         </div>
 
-        {/* Role Toggle */}
-        <div className="grid grid-cols-2 gap-2 bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
-          <button
-            type="button"
-            onClick={() => setRole("landlord")}
-            className={`py-2 rounded-xl text-xs font-bold transition ${
-              role === "landlord" ? "bg-emerald-500 text-slate-950" : "text-slate-400 hover:text-white"
-            }`}
-          >
-            🏢 Landlord
-          </button>
-          <button
-            type="button"
-            onClick={() => setRole("tenant")}
-            className={`py-2 rounded-xl text-xs font-bold transition ${
-              role === "tenant" ? "bg-blue-500 text-white" : "text-slate-400 hover:text-white"
-            }`}
-          >
-            🔑 Tenant
-          </button>
-        </div>
+        {/* Headline */}
+        <h1 className="text-4xl sm:text-6xl font-black tracking-tight leading-tight max-w-4xl">
+          Say Goodbye to House Hunting Stress & <br className="hidden sm:block" />
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400">
+            Messy Landlord Record Books
+          </span>
+        </h1>
 
-        {/* HUMAN-FRIENDLY ERROR BANNER */}
-        {errorMsg && (
-          <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs p-4 rounded-2xl space-y-2">
-            <div className="flex items-start space-x-2">
-              <span className="text-base">⚠️</span>
-              <p className="font-medium leading-relaxed">{errorMsg}</p>
-            </div>
-            {isExistingAccount && (
-              <Link
-                href="/login"
-                className="inline-block mt-2 font-bold text-emerald-400 hover:underline bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/30"
-              >
-                Go to Log In Screen →
-              </Link>
-            )}
-          </div>
-        )}
-
-        {/* Form */}
-        <form onSubmit={handleSignUp} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
-            <input
-              type="text"
-              required
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              placeholder="e.g. Derrick Shisanya"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
-            <input
-              type="tel"
-              required
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="+254 700 000000"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="derrick@gmail.com"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 6 characters"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className={`w-full py-3 rounded-xl font-bold text-xs transition mt-4 ${
-              role === "landlord"
-                ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950"
-                : "bg-blue-500 hover:bg-blue-400 text-white"
-            } disabled:opacity-50`}
-          >
-            {loading ? "Creating Account..." : `Sign Up as ${role === "landlord" ? "Landlord" : "Tenant"}`}
-          </button>
-        </form>
-
-        <p className="text-center text-xs text-slate-400 pt-2 border-t border-slate-800">
-          Already have an account?{" "}
-          <Link href="/login" className="text-emerald-400 hover:underline font-semibold">
-            Log In
-          </Link>
+        <p className="text-slate-400 text-base sm:text-lg max-w-2xl mt-6 leading-relaxed">
+          <strong>eBoma</strong> connects landlords directly with tenants. Browse bedsitters and apartments with photos without broker fees, track M-Pesa payments, and manage moves seamlessly.
         </p>
+
+        {/* 3 Core Value Props */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl mt-10 text-left">
+          <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-2xl backdrop-blur">
+            <div className="text-xl mb-1">🚫 0 Broker Fees</div>
+            <p className="text-xs text-slate-400">No walking in the sun or paying viewing fees. View photos and book directly with the landlord.</p>
+          </div>
+          <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-2xl backdrop-blur">
+            <div className="text-xl mb-1">⏰ 7-Day Due Alerts</div>
+            <p className="text-xs text-slate-400">Tenants receive in-app reminders 7 days before rent is due. Zero awkward calls.</p>
+          </div>
+          <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-2xl backdrop-blur">
+            <div className="text-xl mb-1">📊 Private Portfolio</div>
+            <p className="text-xs text-slate-400">Landlords track each door number, National IDs, and M-Pesa codes in one click.</p>
+          </div>
+        </div>
+
+        {/* Action Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl mt-12">
+          {/* Tenant Card */}
+          <div className="bg-slate-900/90 border border-slate-800 hover:border-blue-500/50 rounded-3xl p-8 text-left transition group backdrop-blur">
+            <div className="w-12 h-12 rounded-2xl bg-blue-500/10 text-blue-400 flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition">
+              🔑
+            </div>
+            <span className="text-xs text-blue-400 uppercase tracking-wider font-bold">For Tenants</span>
+            <h3 className="text-xl font-bold mt-1 text-white">Find or Manage Your Keja</h3>
+            <p className="text-slate-400 text-xs mt-2 mb-6 leading-relaxed">
+              Explore vacant rooms by area, view real building photos, book directly, and manage move-out requests.
+            </p>
+            <Link
+              href="/signup?role=tenant"
+              className="inline-block w-full text-center bg-blue-500 hover:bg-blue-400 text-white font-bold py-3 rounded-xl transition text-sm shadow-lg shadow-blue-500/20"
+            >
+              Enter as Tenant →
+            </Link>
+          </div>
+
+          {/* Landlord Card */}
+          <div className="bg-slate-900/90 border border-slate-800 hover:border-emerald-500/50 rounded-3xl p-8 text-left transition group backdrop-blur">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition">
+              🏢
+            </div>
+            <span className="text-xs text-emerald-400 uppercase tracking-wider font-bold">For Landlords</span>
+            <h3 className="text-xl font-bold mt-1 text-white">Manage Properties & Rent</h3>
+            <p className="text-slate-400 text-xs mt-2 mb-6 leading-relaxed">
+              Upload doors in bulk, add apartment gallery photos, review National IDs, and verify M-Pesa payments.
+            </p>
+            <Link
+              href="/signup?role=landlord"
+              className="inline-block w-full text-center bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3 rounded-xl transition text-sm shadow-lg shadow-emerald-500/20"
+            >
+              Enter as Landlord →
+            </Link>
+          </div>
+        </div>
       </div>
+
+      {/* Footer */}
+      <footer className="border-t border-slate-800/80 py-8 px-6 text-center text-xs text-slate-500 relative z-10">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+          <Logo size="sm" />
+          <p>© 2026 eBoma Technologies Kenya. All rights reserved.</p>
+        </div>
+      </footer>
     </main>
   );
 }

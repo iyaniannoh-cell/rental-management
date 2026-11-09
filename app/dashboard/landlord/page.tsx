@@ -13,10 +13,11 @@ interface Unit {
   unit_type: string;
   monthly_rent: number;
   description: string;
+  media_urls?: string[];
   is_vacant: boolean;
   booking_status: string;
   lease_completed: boolean;
-  vacate_status?: string; // 'requested' | 'key_surrender_requested' | 'keys_handed_over' | null
+  vacate_status?: string;
   vacate_reason?: string;
   vacate_conditions?: string;
   pending_tenant_id?: string;
@@ -38,15 +39,20 @@ export default function LandlordDashboard() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Active Tab: 'portfolio' | 'requests' | 'vacate' | 'notifications'
+  // Tabs
   const [activeTab, setActiveTab] = useState<"portfolio" | "requests" | "vacate" | "notifications">("portfolio");
 
-  // Profile Modal
+  // Profile Modal (View Mode vs Edit Mode)
   const [showProfile, setShowProfile] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editAvatarUrl, setEditAvatarUrl] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
 
   // Key Surrender Request Modal
   const [selectedVacateUnit, setSelectedVacateUnit] = useState<Unit | null>(null);
-  const [keySurrenderNote, setKeySurrenderNote] = useState("Please surrender all keys to the caretaker and leave the room in clean condition.");
+  const [keySurrenderNote, setKeySurrenderNote] = useState("Please surrender all keys to caretaker and leave room clean.");
   const [submittingKeyRequest, setSubmittingKeyRequest] = useState(false);
 
   // Upload Form states
@@ -57,6 +63,7 @@ export default function LandlordDashboard() {
   const [unitType, setUnitType] = useState("Bedsitter");
   const [rent, setRent] = useState("");
   const [description, setDescription] = useState("");
+  const [mediaUrlsInput, setMediaUrlsInput] = useState("");
   const [doorNumber, setDoorNumber] = useState("");
   const [doorPrefix, setDoorPrefix] = useState("A-");
   const [doorStart, setDoorStart] = useState("1");
@@ -83,6 +90,11 @@ export default function LandlordDashboard() {
       .eq("id", user.id)
       .single();
     setLandlordProfile(prof);
+    if (prof) {
+      setEditName(prof.full_name || "");
+      setEditPhone(prof.phone || "");
+      setEditAvatarUrl(prof.avatar_url || "");
+    }
 
     // Units
     const { data: unitsData } = await supabase
@@ -131,6 +143,7 @@ export default function LandlordDashboard() {
         unit_type: u.unit_type || "Bedsitter",
         monthly_rent: Number(u.monthly_rent),
         description: u.description || "",
+        media_urls: u.media_urls || [],
         is_vacant: u.is_vacant ?? true,
         booking_status: u.booking_status || "vacant",
         lease_completed: u.lease_completed || false,
@@ -156,7 +169,53 @@ export default function LandlordDashboard() {
     setLoading(false);
   };
 
-  // 1. REQUEST KEY SURRENDER & INSPECTION
+  // Sign out helper
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    router.push("/");
+  };
+
+  // Save profile changes
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentLandlord) return;
+
+    setSavingProfile(true);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          full_name: editName.trim(),
+          phone: editPhone.trim(),
+          avatar_url: editAvatarUrl.trim(),
+        })
+        .eq("id", currentLandlord.id);
+
+      if (error) throw error;
+
+      alert("Profile updated successfully!");
+      setIsEditingProfile(false);
+      checkUserAndFetch();
+    } catch (err: any) {
+      alert("Error: " + err.message);
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  // Clickable notification
+  const handleNotificationClick = (notif: any) => {
+    const title = notif.title.toLowerCase();
+    const msg = notif.message.toLowerCase();
+
+    if (title.includes("booking") || msg.includes("booking")) {
+      setActiveTab("requests");
+    } else if (title.includes("move-out") || title.includes("vacat") || msg.includes("vacat")) {
+      setActiveTab("vacate");
+    }
+  };
+
+  // Key Surrender Request
   const handleSendKeySurrenderRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedVacateUnit || !selectedVacateUnit.tenant_id) return;
@@ -189,7 +248,7 @@ export default function LandlordDashboard() {
     }
   };
 
-  // 2. FINAL RELEASE & MARK VACANT
+  // Final Release & Mark Vacant
   const handleConfirmFinalRelease = async (unit: Unit) => {
     if (!unit.tenant_id) return;
     if (!confirm(`Confirm final release for ${unit.tenant_name}? ${unit.door_number} will become VACANT in the marketplace immediately.`)) {
@@ -216,7 +275,7 @@ export default function LandlordDashboard() {
         {
           user_id: unit.tenant_id,
           title: "Departure Confirmed! 🎉",
-          message: `Your departure from ${unit.door_number} at ${unit.apartment_name} has been officially confirmed! You are now released and free to book another keja on eBoma.`,
+          message: `Your departure from ${unit.door_number} at ${unit.apartment_name} has been confirmed. You are now released and free to book another keja on eBoma!`,
         },
       ]);
 
@@ -227,7 +286,7 @@ export default function LandlordDashboard() {
     }
   };
 
-  // CLEAR ALL NOTIFICATIONS
+  // Clear all alerts
   const handleClearAllNotifications = async () => {
     if (!currentLandlord) return;
     if (!confirm("Are you sure you want to clear all notifications?")) return;
@@ -240,10 +299,15 @@ export default function LandlordDashboard() {
     }
   };
 
-  // Bulk / Single upload
+  // Save Units
   const handleSaveUnits = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentLandlord || !apartmentName || !location || !rent) return;
+
+    const mediaArray = mediaUrlsInput
+      .split(/[\n,]+/)
+      .map((url) => url.trim())
+      .filter((url) => url.startsWith("http"));
 
     try {
       let unitsToInsert = [];
@@ -257,6 +321,7 @@ export default function LandlordDashboard() {
           unit_type: unitType,
           monthly_rent: Number(rent),
           description: description,
+          media_urls: mediaArray,
           is_vacant: true,
           booking_status: "vacant",
         });
@@ -276,6 +341,7 @@ export default function LandlordDashboard() {
             unit_type: unitType,
             monthly_rent: Number(rent),
             description: description,
+            media_urls: mediaArray,
             is_vacant: true,
             booking_status: "vacant",
           });
@@ -287,13 +353,13 @@ export default function LandlordDashboard() {
 
       alert(`Success! ${unitsToInsert.length} units uploaded to ${apartmentName}.`);
       setIsAddingUnit(false);
+      setMediaUrlsInput("");
       checkUserAndFetch();
     } catch (err: any) {
       alert("Error: " + err.message);
     }
   };
 
-  // Approve booking request
   const handleApprove = async (unit: Unit) => {
     if (!unit.pending_tenant_id) return;
     try {
@@ -353,7 +419,7 @@ export default function LandlordDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col">
-      {/* Top Header */}
+      {/* Top Header - SIGN OUT IS CLEARLY VISIBLE AT ALL TIMES */}
       <header className="border-b border-slate-800 bg-slate-900/60 px-6 py-4 flex items-center justify-between sticky top-0 z-40 backdrop-blur-md">
         <div className="flex items-center space-x-3">
           <Logo size="sm" />
@@ -413,7 +479,7 @@ export default function LandlordDashboard() {
           </button>
         </div>
 
-        {/* Action & Profile */}
+        {/* Right Section: Add Door, Profile Avatar, and Dedicated SIGN OUT Button */}
         <div className="flex items-center space-x-3">
           <button
             onClick={() => setIsAddingUnit(!isAddingUnit)}
@@ -421,112 +487,180 @@ export default function LandlordDashboard() {
           >
             + Upload Doors
           </button>
+
+          {/* Profile Avatar Button */}
           <button
-            onClick={() => setShowProfile(true)}
-            className="w-9 h-9 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 font-black text-sm flex items-center justify-center border-2 border-emerald-400 hover:scale-105 transition shadow-lg shadow-emerald-500/20"
-            title="View Profile"
+            onClick={() => {
+              setIsEditingProfile(false);
+              setShowProfile(true);
+            }}
+            className="w-9 h-9 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 font-black text-sm flex items-center justify-center border-2 border-emerald-400 hover:scale-105 transition shadow-lg overflow-hidden shrink-0"
+            title="View Profile Details"
           >
-            {landlordProfile?.full_name ? landlordProfile.full_name[0].toUpperCase() : "L"}
+            {landlordProfile?.avatar_url ? (
+              <img src={landlordProfile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+            ) : (
+              <span>{landlordProfile?.full_name ? landlordProfile.full_name[0].toUpperCase() : "L"}</span>
+            )}
+          </button>
+
+          {/* PERMANENT VISIBLE SIGN OUT BUTTON */}
+          <button
+            onClick={handleSignOut}
+            className="text-xs bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white font-bold px-3 py-2 rounded-xl border border-red-500/30 transition shadow-sm"
+          >
+            Log Out ➔
           </button>
         </div>
       </header>
 
-      {/* PROFILE MODAL */}
+      {/* TWO-STATE PROFILE MODAL: VIEW MODE ➔ ✏️ EDIT MODE */}
       {showProfile && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-white">Your Landlord Profile</h3>
-              <button onClick={() => setShowProfile(false)} className="text-slate-400 hover:text-white text-sm">✕</button>
-            </div>
-
-            <div className="flex items-center space-x-4 pt-1">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 font-extrabold text-2xl flex items-center justify-center shadow-lg">
-                {landlordProfile?.full_name ? landlordProfile.full_name[0].toUpperCase() : "L"}
-              </div>
-              <div>
-                <h4 className="text-lg font-bold text-white">{landlordProfile?.full_name || "Landlord"}</h4>
-                <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full font-semibold">
-                  Verified Landlord
-                </span>
-              </div>
-            </div>
-
-            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Email Address:</span>
-                <span className="font-semibold text-white">{currentLandlord?.email}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Phone Number:</span>
-                <span className="font-semibold text-white">{landlordProfile?.phone || "Not set"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Total Doors Owned:</span>
-                <span className="font-semibold text-emerald-400">{units.length} Units</span>
-              </div>
-            </div>
-
-            <div className="pt-2 flex space-x-2">
-              <button onClick={() => setShowProfile(false)} className="flex-1 py-2.5 text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 rounded-xl">Close</button>
+              <h3 className="text-base font-bold text-white">
+                {isEditingProfile ? "✏️ Edit Landlord Details" : "Landlord Profile"}
+              </h3>
               <button
-                onClick={async () => {
-                  await supabase.auth.signOut();
-                  router.push("/");
+                onClick={() => {
+                  setShowProfile(false);
+                  setIsEditingProfile(false);
                 }}
-                className="flex-1 py-2.5 text-xs font-bold bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl transition"
+                className="text-slate-400 hover:text-white text-sm"
               >
-                Sign Out
+                ✕
               </button>
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* KEY SURRENDER INSTRUCTIONS MODAL */}
-      {selectedVacateUnit && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>🔑</span> Request Key Surrender & Inspection
-              </h3>
-              <button onClick={() => setSelectedVacateUnit(null)} className="text-slate-400 hover:text-white text-sm">✕</button>
-            </div>
+            {/* VIEW MODE */}
+            {!isEditingProfile ? (
+              <div className="space-y-4">
+                <div className="flex items-center space-x-4">
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 font-extrabold text-2xl flex items-center justify-center overflow-hidden border-2 border-emerald-400 shadow-lg shrink-0">
+                    {landlordProfile?.avatar_url ? (
+                      <img src={landlordProfile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                    ) : (
+                      <span>{landlordProfile?.full_name ? landlordProfile.full_name[0].toUpperCase() : "L"}</span>
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="text-lg font-bold text-white">{landlordProfile?.full_name || "Landlord"}</h4>
+                    <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-semibold">
+                      Verified Landlord
+                    </span>
+                  </div>
+                </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Rent for <strong>{selectedVacateUnit.door_number}</strong> is cleared. Instruct <strong>{selectedVacateUnit.tenant_name}</strong> on key return and room inspection:
-            </p>
+                <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Email Address:</span>
+                    <span className="font-semibold text-white flex items-center gap-1">
+                      {currentLandlord?.email} <span className="text-[10px] text-amber-400">🔒</span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Phone Number:</span>
+                    <span className="font-semibold text-white">{landlordProfile?.phone || "Not set"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Total Doors:</span>
+                    <span className="font-semibold text-emerald-400">{units.length} Units</span>
+                  </div>
+                </div>
 
-            <form onSubmit={handleSendKeySurrenderRequest} className="space-y-4 pt-1">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Key Surrender Instructions: *</label>
-                <textarea
-                  rows={3}
-                  required
-                  value={keySurrenderNote}
-                  onChange={(e) => setKeySurrenderNote(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-blue-500"
-                />
+                <div className="pt-2 flex space-x-2">
+                  <button
+                    onClick={() => setIsEditingProfile(true)}
+                    className="flex-1 py-2.5 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 rounded-xl transition flex items-center justify-center gap-1.5"
+                  >
+                    <span>✏️ Edit Profile Details</span>
+                  </button>
+                  <button
+                    onClick={handleSignOut}
+                    className="flex-1 py-2.5 text-xs font-bold bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/30 rounded-xl transition"
+                  >
+                    Log Out
+                  </button>
+                </div>
               </div>
+            ) : (
+              /* EDIT MODE */
+              <form onSubmit={handleSaveProfile} className="space-y-4 pt-1">
+                <div className="flex items-center space-x-3">
+                  <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center overflow-hidden shrink-0">
+                    {editAvatarUrl ? (
+                      <img src={editAvatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-slate-500 text-xl font-bold">📷</span>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">Photo URL</label>
+                    <input
+                      type="url"
+                      placeholder="https://example.com/avatar.jpg"
+                      value={editAvatarUrl}
+                      onChange={(e) => setEditAvatarUrl(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                    />
+                  </div>
+                </div>
 
-              <div className="flex space-x-2 pt-2 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setSelectedVacateUnit(null)}
-                  className="flex-1 py-2.5 text-xs font-semibold text-slate-400 hover:text-white"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submittingKeyRequest}
-                  className="flex-1 py-2.5 text-xs font-bold bg-blue-500 hover:bg-blue-400 text-white rounded-xl transition shadow-lg shadow-blue-500/20"
-                >
-                  {submittingKeyRequest ? "Sending..." : "Send Key Instructions"}
-                </button>
-              </div>
-            </form>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number</label>
+                  <input
+                    type="tel"
+                    required
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                  />
+                </div>
+
+                {/* UNEDITABLE EMAIL 🔒 */}
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-xs font-semibold text-slate-400">Email Address</label>
+                    <span className="text-[10px] text-amber-400 font-bold">🔒 Permanent & Uneditable</span>
+                  </div>
+                  <input
+                    type="email"
+                    disabled
+                    value={currentLandlord?.email || ""}
+                    className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-500 cursor-not-allowed"
+                  />
+                </div>
+
+                <div className="pt-2 flex space-x-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingProfile(false)}
+                    className="flex-1 py-2.5 text-xs font-semibold text-slate-400 hover:text-white"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingProfile}
+                    className="flex-1 py-2.5 text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl transition shadow-lg shadow-emerald-500/20"
+                  >
+                    {savingProfile ? "Saving..." : "Save Changes"}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -538,9 +672,7 @@ export default function LandlordDashboard() {
           <div className="space-y-4">
             <div>
               <h2 className="text-lg font-bold">Tenant Move-Out Inquiries</h2>
-              <p className="text-xs text-slate-400">
-                Tenants whose rent is cleared who have requested departure. Review key surrender and confirm final release.
-              </p>
+              <p className="text-xs text-slate-400">Review key surrender and confirm final release.</p>
             </div>
 
             {vacateRequests.length === 0 ? (
@@ -555,9 +687,7 @@ export default function LandlordDashboard() {
                     <div>
                       <div className="flex items-start justify-between">
                         <div>
-                          <span className="text-xs uppercase tracking-wider text-amber-400 font-bold">
-                            🚪 Move-Out Request
-                          </span>
+                          <span className="text-xs uppercase tracking-wider text-amber-400 font-bold">🚪 Move-Out Request</span>
                           <h3 className="text-lg font-bold text-white mt-0.5">{req.apartment_name} - {req.door_number}</h3>
                           <span className="text-xs text-slate-400">Rent: KES {req.monthly_rent.toLocaleString()} / Mo</span>
                         </div>
@@ -567,24 +697,13 @@ export default function LandlordDashboard() {
                       </div>
 
                       <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 mt-4 space-y-1.5 text-xs">
-                        <div>
-                          <span className="text-slate-400">Tenant: </span>
-                          <span className="font-bold text-white">{req.tenant_name}</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-400">Phone: </span>
-                          <span className="text-slate-200">📞 {req.tenant_phone}</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-400">National ID: </span>
-                          <span className="font-mono text-emerald-400">{req.tenant_id_number}</span>
-                        </div>
+                        <div><span className="text-slate-400">Tenant: </span><span className="font-bold text-white">{req.tenant_name}</span></div>
+                        <div><span className="text-slate-400">Phone: </span><span className="text-slate-200">📞 {req.tenant_phone}</span></div>
+                        <div><span className="text-slate-400">National ID: </span><span className="font-mono text-emerald-400">{req.tenant_id_number}</span></div>
                         <div className="pt-1 border-t border-slate-800">
                           <span className="text-amber-400 font-semibold">Vacate Reason: </span>
                           <span className="text-slate-200 italic">"{req.vacate_reason}"</span>
                         </div>
-                        
-                        {/* Live Handover Status */}
                         {req.vacate_status === "keys_handed_over" ? (
                           <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 font-bold mt-2">
                             🔑 Tenant Confirmed: Keys handed over & room surrendered!
@@ -602,14 +721,13 @@ export default function LandlordDashboard() {
                         <button
                           onClick={() => {
                             setSelectedVacateUnit(req);
-                            setKeySurrenderNote(req.vacate_conditions || "Please surrender all door keys and leave room clean.");
+                            setKeySurrenderNote(req.vacate_conditions || "Please surrender all door keys to caretaker and leave room clean.");
                           }}
                           className="flex-1 py-2.5 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-blue-400 border border-blue-500/30 rounded-xl transition"
                         >
                           🔑 Request Key Surrender
                         </button>
                       )}
-                      
                       <button
                         onClick={() => handleConfirmFinalRelease(req)}
                         className="flex-1 py-2.5 text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl transition shadow-lg shadow-emerald-500/20"
@@ -659,13 +777,13 @@ export default function LandlordDashboard() {
           </div>
         )}
 
-        {/* TAB 3: ALERTS */}
+        {/* TAB 3: CLICKABLE NOTIFICATIONS */}
         {activeTab === "notifications" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold">Landlord In-App Alerts</h2>
-                <p className="text-xs text-slate-400">Real-time alerts when clients book rooms, cancel, or clear arrears & vacate</p>
+                <p className="text-xs text-slate-400">Click any alert to jump directly into the action!</p>
               </div>
               {notifications.length > 0 && (
                 <button
@@ -685,9 +803,16 @@ export default function LandlordDashboard() {
             ) : (
               <div className="space-y-3">
                 {notifications.map((n) => (
-                  <div key={n.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-1">
+                  <div
+                    key={n.id}
+                    onClick={() => handleNotificationClick(n)}
+                    className="bg-slate-900 border border-slate-800 hover:border-emerald-500/60 rounded-2xl p-5 space-y-1 transition cursor-pointer group"
+                  >
                     <div className="flex items-center justify-between">
-                      <h4 className="text-sm font-bold text-emerald-400">{n.title}</h4>
+                      <h4 className="text-sm font-bold text-emerald-400 group-hover:text-emerald-300 flex items-center gap-1.5">
+                        <span>{n.title}</span>
+                        <span className="text-xs opacity-60">➔ Click to open</span>
+                      </h4>
                       <span className="text-[10px] text-slate-500 font-mono">{new Date(n.created_at).toLocaleString()}</span>
                     </div>
                     <p className="text-xs text-slate-200 leading-relaxed pt-1">{n.message}</p>
@@ -698,7 +823,7 @@ export default function LandlordDashboard() {
           </div>
         )}
 
-        {/* TAB 4: PORTFOLIO */}
+        {/* TAB 4: PORTFOLIO & BULK UPLOAD */}
         {activeTab === "portfolio" && (
           <div className="space-y-6">
             {isAddingUnit && (
@@ -714,11 +839,11 @@ export default function LandlordDashboard() {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div>
                     <label className="block text-xs text-slate-300 mb-1">Apartment</label>
-                    <input type="text" required placeholder="Green Heights" value={apartmentName} onChange={(e) => setApartmentName(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white" />
+                    <input type="text" required placeholder="e.g. Green Heights" value={apartmentName} onChange={(e) => setApartmentName(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white" />
                   </div>
                   <div>
                     <label className="block text-xs text-slate-300 mb-1">Location</label>
-                    <input type="text" required placeholder="Roysambu" value={location} onChange={(e) => setLocation(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white" />
+                    <input type="text" required placeholder="e.g. Roysambu" value={location} onChange={(e) => setLocation(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white" />
                   </div>
                   <div>
                     <label className="block text-xs text-slate-300 mb-1">Room Type</label>
@@ -756,6 +881,23 @@ export default function LandlordDashboard() {
                       </div>
                     </div>
                   )}
+                </div>
+
+                {/* OPTIONAL APARTMENT PHOTOS */}
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-xs font-semibold text-slate-300">
+                      📷 Apartment Building Photos (Optional - Applies to all doors)
+                    </label>
+                    <span className="text-[10px] text-slate-500">Comma-separated image links</span>
+                  </div>
+                  <textarea
+                    rows={2}
+                    placeholder="https://images.unsplash.com/photo-1545324418-cc1a3fa10c00, https://images.unsplash.com/photo-1512917774080-9991f1c4c750"
+                    value={mediaUrlsInput}
+                    onChange={(e) => setMediaUrlsInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white"
+                  />
                 </div>
 
                 <div>
