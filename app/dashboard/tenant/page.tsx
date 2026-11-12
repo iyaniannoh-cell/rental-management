@@ -20,8 +20,6 @@ export default function TenantDashboard() {
   const [searchLocation, setSearchLocation] = useState("");
   const [filterType, setFilterType] = useState("All");
 
-  const [hasPaidRent, setHasPaidRent] = useState(false);
-
   // Profile Modal State (View vs Edit)
   const [showProfile, setShowProfile] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -38,11 +36,20 @@ export default function TenantDashboard() {
   const [mpesaCodeInput, setMpesaCodeInput] = useState("");
   const [submittingCheckIn, setSubmittingCheckIn] = useState(false);
 
-  // Vacate Modal State
+  // 1. Cancel Pending Booking Modal
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState("Landlord took too long to respond");
+  const [customReasonText, setCustomReasonText] = useState("");
+  const [cancelling, setCancelling] = useState(false);
+
+  // 2. Decline Approved Booking Modal
+  const [showApprovedCancelModal, setShowApprovedCancelModal] = useState(false);
+  const [approvedCancelReason, setApprovedCancelReason] = useState("Got another room");
+  const [customApprovedCancelText, setCustomApprovedCancelText] = useState("");
+  const [cancellingApproved, setCancellingApproved] = useState(false);
+
+  // 3. Vacate Modal
   const [showVacateModal, setShowVacateModal] = useState(false);
-  const [showArrearsBlockModal, setShowArrearsBlockModal] = useState(false);
-  const [arrearsMpesaCode, setArrearsMpesaCode] = useState("");
-  const [clearingArrears, setClearingArrears] = useState(false);
   const [vacateReason, setVacateReason] = useState("Relocating");
   const [customVacateText, setCustomVacateText] = useState("");
   const [submittingVacate, setSubmittingVacate] = useState(false);
@@ -81,18 +88,6 @@ export default function TenantDashboard() {
       .maybeSingle();
     setAssignedUnit(activeUnit);
 
-    // Rent status check
-    if (activeUnit) {
-      const { data: payments } = await supabase
-        .from("payments")
-        .select("id, status")
-        .eq("unit_id", activeUnit.id)
-        .eq("tenant_id", user.id)
-        .eq("status", "paid");
-      
-      setHasPaidRent(Boolean(payments && payments.length > 0));
-    }
-
     // 2. Approved unit waiting for ID & Check-in
     const { data: approvedUnit } = await supabase
       .from("units")
@@ -116,7 +111,7 @@ export default function TenantDashboard() {
     );
     setMyPendingBooking(pending || null);
 
-    // 5. Strictly private notifications
+    // 5. Notifications
     const { data: notifData } = await supabase
       .from("notifications")
       .select("*")
@@ -125,16 +120,21 @@ export default function TenantDashboard() {
     setNotifications(notifData || []);
   };
 
-  // Sign out helper
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     router.push("/");
   };
 
-  // 1-CLICK INSTANT CANCEL BOOKING REQUEST
-  const handleDirectCancelBooking = async () => {
+  // Cancel Pending Booking
+  const handleConfirmCancel = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!myPendingBooking || !currentTenant) return;
-    if (!confirm(`Cancel your booking request for ${myPendingBooking.door_number} at ${myPendingBooking.apartment_name}?`)) return;
+
+    setCancelling(true);
+    const finalReason =
+      cancelReason === "Other reasons"
+        ? customReasonText.trim() || "No detailed reason given."
+        : cancelReason;
 
     try {
       const { error: unitErr } = await supabase
@@ -149,63 +149,120 @@ export default function TenantDashboard() {
 
       if (unitErr) throw unitErr;
 
-      await supabase.from("notifications").insert([
-        {
-          user_id: myPendingBooking.landlord_id,
-          title: "Booking Request Cancelled ⚠️",
-          message: `Tenant (${currentTenant.email}) cancelled their booking request for ${myPendingBooking.door_number} at ${myPendingBooking.apartment_name}. Room is now back to Vacant.`,
-        },
-      ]);
+      if (myPendingBooking.landlord_id) {
+        await supabase.from("notifications").insert([
+          {
+            user_id: myPendingBooking.landlord_id,
+            title: "Booking Request Cancelled ⚠️",
+            message: `Tenant (${currentTenant.email}) cancelled their booking for ${myPendingBooking.door_number} at ${myPendingBooking.apartment_name}. Reason: "${finalReason}". Room is now back to Vacant.`,
+          },
+        ]);
+      }
 
-      alert("Booking request cancelled! The room is released, and you can now book another house.");
+      alert("Booking request cancelled! You can now book another house.");
+      setShowCancelModal(false);
+      setCustomReasonText("");
       setMyPendingBooking(null);
-      loadTenantData();
+      await loadTenantData();
     } catch (err: any) {
       alert("Error cancelling: " + err.message);
+    } finally {
+      setCancelling(false);
     }
   };
 
-  // SAVE TENANT PROFILE (Email & National ID permanently locked 🔒)
-  const handleSaveProfile = async (e: React.FormEvent) => {
+  // Decline Approved Booking
+  const handleConfirmApprovedCancel = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentTenant) return;
+    if (!approvedPendingIdUnit || !currentTenant) return;
 
-    setSavingProfile(true);
+    setCancellingApproved(true);
+    const finalReason =
+      approvedCancelReason === "Other reasons"
+        ? customApprovedCancelText.trim() || "No detailed reason given."
+        : approvedCancelReason;
+
     try {
-      const { error } = await supabase
-        .from("profiles")
+      const { error: unitErr } = await supabase
+        .from("units")
         .update({
-          full_name: editName.trim(),
-          phone: editPhone.trim(),
-          avatar_url: editAvatarUrl.trim(),
+          booking_status: "vacant",
+          is_vacant: true,
+          tenant_id: null,
+          pending_tenant_id: null,
         })
-        .eq("id", currentTenant.id);
+        .eq("id", approvedPendingIdUnit.id);
 
-      if (error) throw error;
+      if (unitErr) throw unitErr;
 
-      alert("Profile updated successfully!");
-      setIsEditingProfile(false);
-      loadTenantData();
+      if (approvedPendingIdUnit.landlord_id) {
+        const tenantName = tenantProfile?.full_name || currentTenant.email;
+        await supabase.from("notifications").insert([
+          {
+            user_id: approvedPendingIdUnit.landlord_id,
+            title: "Approved Booking Declined by Tenant ⚠️",
+            message: `${tenantName} declined approved booking for ${approvedPendingIdUnit.door_number} at ${approvedPendingIdUnit.apartment_name}. Reason: "${finalReason}". Room is back to Vacant.`,
+          },
+        ]);
+      }
+
+      alert("Approved booking cancelled! Room is back to Vacant.");
+      setShowApprovedCancelModal(false);
+      setCustomApprovedCancelText("");
+      setApprovedPendingIdUnit(null);
+      await loadTenantData();
     } catch (err: any) {
       alert("Error: " + err.message);
     } finally {
-      setSavingProfile(false);
+      setCancellingApproved(false);
     }
   };
 
-  // Clickable notification
-  const handleNotificationClick = (notif: any) => {
-    const title = notif.title.toLowerCase();
-    const msg = notif.message.toLowerCase();
+  // Vacate Request
+  const handleConfirmVacate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assignedUnit || !currentTenant) return;
 
-    if (title.includes("approved") || msg.includes("check-in") || msg.includes("national id")) {
-      setActiveTab("lease");
-    } else if (title.includes("departure") || title.includes("keys")) {
-      setActiveTab("lease");
+    setSubmittingVacate(true);
+    const finalReason =
+      vacateReason === "Another reason"
+        ? customVacateText.trim() || "Relocating"
+        : vacateReason;
+
+    try {
+      const { error: unitErr } = await supabase
+        .from("units")
+        .update({
+          vacate_status: "requested",
+          vacate_reason: finalReason,
+        })
+        .eq("id", assignedUnit.id);
+
+      if (unitErr) throw unitErr;
+
+      const tenantName = tenantProfile?.full_name || currentTenant.email;
+      if (assignedUnit.landlord_id) {
+        await supabase.from("notifications").insert([
+          {
+            user_id: assignedUnit.landlord_id,
+            title: "Move-Out Request Received 🚪",
+            message: `${tenantName} requested to vacate ${assignedUnit.door_number} at ${assignedUnit.apartment_name}. Reason: "${finalReason}".`,
+          },
+        ]);
+      }
+
+      alert("Vacate request sent to your landlord successfully!");
+      setShowVacateModal(false);
+      setCustomVacateText("");
+      await loadTenantData();
+    } catch (err: any) {
+      alert("Error: " + err.message);
+    } finally {
+      setSubmittingVacate(false);
     }
   };
 
-  // Check-in submission (Auto-allocates the house!)
+  // Submit Check-in (National ID + M-Pesa Code)
   const handleCompleteCheckIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!idNumberInput.trim() || !mpesaCodeInput.trim() || !approvedPendingIdUnit) return;
@@ -237,17 +294,19 @@ export default function TenantDashboard() {
         },
       ]);
 
-      await supabase.from("notifications").insert([
-        {
-          user_id: approvedPendingIdUnit.landlord_id,
-          title: "Tenant Check-In Completed! 🏠",
-          message: `${tenantProfile?.full_name || currentTenant.email} completed check-in for ${approvedPendingIdUnit.door_number}. National ID: ${idNumberInput.trim()}, M-Pesa Code: ${mpesaCodeInput.trim().toUpperCase()}. Unit is now officially Occupied!`,
-        },
-      ]);
+      if (approvedPendingIdUnit.landlord_id) {
+        await supabase.from("notifications").insert([
+          {
+            user_id: approvedPendingIdUnit.landlord_id,
+            title: "Tenant Check-In Completed! 🏠",
+            message: `${tenantProfile?.full_name || currentTenant.email} completed check-in for ${approvedPendingIdUnit.door_number}. National ID: ${idNumberInput.trim()}, M-Pesa Code: ${mpesaCodeInput.trim().toUpperCase()}.`,
+          },
+        ]);
+      }
 
       alert(`Check-in completed! ${approvedPendingIdUnit.door_number} is officially allocated to you.`);
       setApprovedPendingIdUnit(null);
-      loadTenantData();
+      await loadTenantData();
     } catch (err: any) {
       alert("Error: " + err.message);
     } finally {
@@ -255,101 +314,58 @@ export default function TenantDashboard() {
     }
   };
 
-  // Arrears check before vacating
-  const handleInitiateVacate = () => {
-    if (!hasPaidRent) {
-      setShowArrearsBlockModal(true);
-    } else {
-      setShowVacateModal(true);
-    }
-  };
-
-  const handleClearArrearsAndProceed = async (e: React.FormEvent) => {
+  // Save Profile
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!arrearsMpesaCode.trim() || !assignedUnit) return;
+    if (!currentTenant) return;
 
-    setClearingArrears(true);
+    setSavingProfile(true);
     try {
-      await supabase.from("payments").insert([
-        {
-          unit_id: assignedUnit.id,
-          tenant_id: currentTenant.id,
-          amount: assignedUnit.monthly_rent,
-          payment_date: new Date().toISOString().split("T")[0],
-          status: "paid",
-        },
-      ]);
-
-      await supabase
-        .from("units")
-        .update({ mpesa_code: arrearsMpesaCode.trim().toUpperCase() })
-        .eq("id", assignedUnit.id);
-
-      alert("Rent cleared! You can now submit your vacate request.");
-      setHasPaidRent(true);
-      setShowArrearsBlockModal(false);
-      setShowVacateModal(true);
-    } catch (err: any) {
-      alert("Error: " + err.message);
-    } finally {
-      setClearingArrears(false);
-    }
-  };
-
-  const handleConfirmVacate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!assignedUnit || !currentTenant) return;
-
-    setSubmittingVacate(true);
-    const finalReason = vacateReason === "Another reason" ? customVacateText.trim() || "Relocating" : vacateReason;
-
-    try {
-      await supabase
-        .from("units")
+      const { error } = await supabase
+        .from("profiles")
         .update({
-          vacate_status: "requested",
-          vacate_reason: finalReason,
+          full_name: editName.trim(),
+          phone: editPhone.trim(),
+          avatar_url: editAvatarUrl.trim(),
         })
-        .eq("id", assignedUnit.id);
+        .eq("id", currentTenant.id);
 
-      await supabase.from("notifications").insert([
-        {
-          user_id: assignedUnit.landlord_id,
-          title: "Move-Out Request (Rent Cleared) 🚪",
-          message: `${tenantProfile?.full_name || currentTenant.email} requested to vacate ${assignedUnit.door_number}. Reason: "${finalReason}".`,
-        },
-      ]);
+      if (error) throw error;
 
-      alert("Vacate request sent to landlord!");
-      setShowVacateModal(false);
-      loadTenantData();
+      alert("Profile updated successfully!");
+      setIsEditingProfile(false);
+      await loadTenantData();
     } catch (err: any) {
       alert("Error: " + err.message);
     } finally {
-      setSubmittingVacate(false);
+      setSavingProfile(false);
     }
   };
 
+  // Key Handover
   const handleConfirmKeyHandover = async () => {
     if (!assignedUnit || !currentTenant) return;
     if (!confirm("Confirm that you have handed over all keys and vacated the room?")) return;
 
     try {
       await supabase.from("units").update({ vacate_status: "keys_handed_over" }).eq("id", assignedUnit.id);
-      await supabase.from("notifications").insert([
-        {
-          user_id: assignedUnit.landlord_id,
-          title: "Keys Handed Over by Tenant 🔑",
-          message: `Tenant has confirmed handing over keys for ${assignedUnit.door_number}. Please perform inspection and click Final Release.`,
-        },
-      ]);
+      if (assignedUnit.landlord_id) {
+        await supabase.from("notifications").insert([
+          {
+            user_id: assignedUnit.landlord_id,
+            title: "Keys Handed Over by Tenant 🔑",
+            message: `Tenant has confirmed handing over keys for ${assignedUnit.door_number}.`,
+          },
+        ]);
+      }
       alert("Key handover confirmed!");
-      loadTenantData();
+      await loadTenantData();
     } catch (err: any) {
       alert("Error: " + err.message);
     }
   };
 
+  // Book Room
   const handleBookRoom = async (house: any) => {
     if (!currentTenant) return;
     if (assignedUnit || approvedPendingIdUnit || myPendingBooking) {
@@ -363,17 +379,19 @@ export default function TenantDashboard() {
         pending_tenant_id: currentTenant.id,
       }).eq("id", house.id);
 
-      await supabase.from("notifications").insert([
-        {
-          user_id: house.landlord_id,
-          title: "New Booking Request! 🔔",
-          message: `A client (${currentTenant.email}) requested to book ${house.door_number} at ${house.apartment_name}.`,
-        },
-      ]);
+      if (house.landlord_id) {
+        await supabase.from("notifications").insert([
+          {
+            user_id: house.landlord_id,
+            title: "New Booking Request! 🔔",
+            message: `A client (${currentTenant.email}) requested to book ${house.door_number} at ${house.apartment_name}.`,
+          },
+        ]);
+      }
 
       alert(`Request submitted for ${house.door_number}! Awaiting landlord approval.`);
       setViewingHousePhotos(null);
-      loadTenantData();
+      await loadTenantData();
     } catch (err: any) {
       alert("Error: " + err.message);
     }
@@ -387,55 +405,58 @@ export default function TenantDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col">
-      {/* Top Header - SIGN OUT IS CLEARLY VISIBLE AT ALL TIMES */}
+      {/* Top Header */}
       <header className="border-b border-slate-800 bg-slate-900/60 px-6 py-4 flex items-center justify-between sticky top-0 z-40 backdrop-blur-md">
         <div className="flex items-center space-x-3">
           <Logo size="sm" />
-          <span className="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded font-semibold hidden sm:inline-block">
+          <span className="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-2.5 py-0.5 rounded-full font-bold hidden sm:inline-block">
             Tenant Portal
           </span>
         </div>
 
+        {/* Tab Controls */}
         <div className="flex items-center space-x-2 bg-slate-800 p-1 rounded-xl border border-slate-700">
           <button
             onClick={() => setActiveTab("lease")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-              activeTab === "lease" ? "bg-blue-500 text-white" : "text-slate-400 hover:text-white"
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+              activeTab === "lease" ? "bg-blue-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
             }`}
           >
             My Rental & Lease
           </button>
           <button
             onClick={() => setActiveTab("search")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-              activeTab === "search" ? "bg-blue-500 text-white" : "text-slate-400 hover:text-white"
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+              activeTab === "search" ? "bg-blue-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
             }`}
           >
             🔍 Explore Kejas ({marketHouses.length})
           </button>
           <button
             onClick={() => setActiveTab("notifications")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold relative transition ${
-              activeTab === "notifications" ? "bg-blue-500 text-white" : "text-slate-400 hover:text-white"
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold relative transition ${
+              activeTab === "notifications" ? "bg-blue-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
             }`}
           >
             🔔 Alerts
             {notifications.length > 0 && (
-              <span className="ml-1.5 bg-blue-400 text-slate-950 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+              <span className="ml-1.5 bg-blue-400 text-slate-950 text-[10px] font-black px-1.5 py-0.5 rounded-full">
                 {notifications.length}
               </span>
             )}
           </button>
         </div>
 
-        {/* Right Section: Profile Avatar & Dedicated SIGN OUT button */}
+        {/* Right Section: Profile & Logout */}
         <div className="flex items-center space-x-3">
+          {/* PROFILE BUTTON - CLICKABLE */}
           <button
+            type="button"
             onClick={() => {
               setIsEditingProfile(false);
               setShowProfile(true);
             }}
-            className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-400 text-white font-black text-sm flex items-center justify-center border-2 border-blue-400 hover:scale-105 transition shadow-lg overflow-hidden shrink-0"
+            className="w-9 h-9 rounded-full bg-blue-600 text-white font-black text-sm flex items-center justify-center border-2 border-blue-400 hover:scale-105 transition shadow-lg overflow-hidden shrink-0 cursor-pointer"
             title="View Profile Details"
           >
             {tenantProfile?.avatar_url ? (
@@ -445,25 +466,26 @@ export default function TenantDashboard() {
             )}
           </button>
 
-          {/* PERMANENT VISIBLE SIGN OUT BUTTON */}
           <button
+            type="button"
             onClick={handleSignOut}
-            className="text-xs bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white font-bold px-3 py-2 rounded-xl border border-red-500/30 transition shadow-sm"
+            className="text-xs bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white font-bold px-3 py-2 rounded-xl border border-red-500/30 transition shadow-sm cursor-pointer"
           >
             Log Out ➔
           </button>
         </div>
       </header>
 
-      {/* TWO-STATE PROFILE MODAL: VIEW MODE ➔ ✏️ EDIT MODE */}
+      {/* FULLY RESTORED PROFILE MODAL */}
       {showProfile && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="text-base font-bold text-white">
                 {isEditingProfile ? "✏️ Edit Tenant Details" : "Tenant Profile"}
               </h3>
               <button
+                type="button"
                 onClick={() => {
                   setShowProfile(false);
                   setIsEditingProfile(false);
@@ -507,7 +529,7 @@ export default function TenantDashboard() {
                   <div className="flex justify-between">
                     <span className="text-slate-400">National ID Number:</span>
                     <span className="font-mono font-bold text-emerald-400 flex items-center gap-1">
-                      {tenantProfile?.id_number || "Provided during Check-In"} <span className="text-[10px] text-emerald-400">🔒</span>
+                      {tenantProfile?.id_number || "Set during check-in"} <span className="text-[10px] text-emerald-400">🔒</span>
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -520,14 +542,16 @@ export default function TenantDashboard() {
 
                 <div className="pt-2 flex space-x-2">
                   <button
+                    type="button"
                     onClick={() => setIsEditingProfile(true)}
-                    className="flex-1 py-2.5 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 rounded-xl transition flex items-center justify-center gap-1.5"
+                    className="flex-1 py-2.5 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <span>✏️ Edit Profile Details</span>
                   </button>
                   <button
+                    type="button"
                     onClick={handleSignOut}
-                    className="flex-1 py-2.5 text-xs font-bold bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/30 rounded-xl transition"
+                    className="flex-1 py-2.5 text-xs font-bold bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/30 rounded-xl transition cursor-pointer"
                   >
                     Log Out
                   </button>
@@ -578,7 +602,6 @@ export default function TenantDashboard() {
                   />
                 </div>
 
-                {/* PERMANENTLY LOCKED EMAIL 🔒 */}
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-xs font-semibold text-slate-400">Email Address</label>
@@ -592,7 +615,6 @@ export default function TenantDashboard() {
                   />
                 </div>
 
-                {/* PERMANENTLY LOCKED NATIONAL ID 🔒 */}
                 <div>
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-xs font-semibold text-slate-400">National ID Number</label>
@@ -628,13 +650,15 @@ export default function TenantDashboard() {
         </div>
       )}
 
-      {/* PROPERTY PHOTOS & MEDIA TOUR MODAL */}
+      {/* FULL-SCREEN PROPERTY PHOTOS & TOUR GALLERY MODAL */}
       {viewingHousePhotos && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6 overflow-y-auto">
+          {/* Top Bar with Clear Back Button */}
           <div className="max-w-4xl w-full mx-auto flex items-center justify-between border-b border-slate-800 pb-4">
             <button
+              type="button"
               onClick={() => setViewingHousePhotos(null)}
-              className="flex items-center space-x-2 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2.5 rounded-xl border border-slate-700 transition"
+              className="flex items-center space-x-2 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2.5 rounded-xl border border-slate-700 transition cursor-pointer"
             >
               <span>← Back to Search</span>
             </button>
@@ -644,26 +668,28 @@ export default function TenantDashboard() {
             </div>
           </div>
 
+          {/* Photo Gallery Grid */}
           <div className="max-w-4xl w-full mx-auto my-6 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {viewingHousePhotos.media_urls && viewingHousePhotos.media_urls.length > 0 ? (
                 viewingHousePhotos.media_urls.map((imgUrl: string, idx: number) => (
-                  <div key={idx} className="h-64 rounded-2xl overflow-hidden bg-slate-900 border border-slate-800">
+                  <div key={idx} className="h-64 rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-md">
                     <img src={imgUrl} alt={`Apartment photo ${idx + 1}`} className="w-full h-full object-cover hover:scale-105 transition duration-300" />
                   </div>
                 ))
               ) : (
                 <>
-                  <div className="h-64 rounded-2xl overflow-hidden bg-slate-900 border border-slate-800">
+                  <div className="h-64 rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-md">
                     <img src="https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=800&q=80" alt="Apartment Exterior" className="w-full h-full object-cover" />
                   </div>
-                  <div className="h-64 rounded-2xl overflow-hidden bg-slate-900 border border-slate-800">
+                  <div className="h-64 rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-md">
                     <img src="https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=800&q=80" alt="Living Room" className="w-full h-full object-cover" />
                   </div>
                 </>
               )}
             </div>
 
+            {/* Description Card */}
             <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-2 text-xs">
               <span className="text-emerald-400 font-bold uppercase tracking-wider">Property Description</span>
               <p className="text-slate-300 leading-relaxed text-sm">
@@ -672,15 +698,17 @@ export default function TenantDashboard() {
             </div>
           </div>
 
+          {/* Bottom Bar with Book Now Button */}
           <div className="max-w-4xl w-full mx-auto border-t border-slate-800 pt-4 flex items-center justify-between">
             <div>
               <span className="text-xs text-slate-400 block">Monthly Rent</span>
               <span className="text-xl font-black text-white">KES {Number(viewingHousePhotos.monthly_rent).toLocaleString()}</span>
             </div>
             <button
+              type="button"
               onClick={() => handleBookRoom(viewingHousePhotos)}
               disabled={Boolean(assignedUnit) || Boolean(myPendingBooking) || Boolean(approvedPendingIdUnit)}
-              className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs px-6 py-3 rounded-xl transition shadow-lg shadow-emerald-500/20"
+              className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs px-6 py-3 rounded-xl transition shadow-lg shadow-emerald-500/20 cursor-pointer disabled:opacity-40"
             >
               Book This Room Now ➔
             </button>
@@ -688,9 +716,200 @@ export default function TenantDashboard() {
         </div>
       )}
 
+      {/* 1. CANCEL PENDING BOOKING MODAL */}
+      {showCancelModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <span>⚠️</span> Cancel Booking Request
+              </h3>
+              <button onClick={() => setShowCancelModal(false)} className="text-slate-400 hover:text-white text-sm">✕</button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Cancelling releases <strong>{myPendingBooking?.door_number}</strong> back to Vacant and unlocks you to book another house.
+            </p>
+
+            <form onSubmit={handleConfirmCancel} className="space-y-4 pt-1">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Reason for Cancelling: *</label>
+                <select
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none"
+                >
+                  <option value="Landlord took too long to respond">1. Landlord took too long to respond</option>
+                  <option value="Made it by a mistake">2. Made it by a mistake</option>
+                  <option value="Other reasons">3. Other reasons</option>
+                </select>
+              </div>
+
+              {cancelReason === "Other reasons" && (
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs font-semibold text-slate-300">Specify reason (Max 50 chars):</label>
+                    <span className="text-[10px] text-slate-500 font-mono">{customReasonText.length}/50</span>
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    maxLength={50}
+                    placeholder="e.g. Found another place closer to work"
+                    value={customReasonText}
+                    onChange={(e) => setCustomReasonText(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                  />
+                </div>
+              )}
+
+              <div className="flex space-x-2 pt-2 border-t border-slate-800">
+                <button type="button" onClick={() => setShowCancelModal(false)} className="flex-1 py-2.5 text-xs font-semibold text-slate-400 hover:text-white">Keep Request</button>
+                <button type="submit" disabled={cancelling} className="flex-1 py-2.5 text-xs font-bold bg-red-500 hover:bg-red-400 text-white rounded-xl transition">
+                  {cancelling ? "Cancelling..." : "Confirm Cancel"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 2. DECLINE APPROVED BOOKING MODAL */}
+      {showApprovedCancelModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <span>⚠️</span> Decline Approved Booking
+              </h3>
+              <button onClick={() => setShowApprovedCancelModal(false)} className="text-slate-400 hover:text-white text-sm">✕</button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              If you no longer wish to take <strong>{approvedPendingIdUnit?.door_number}</strong> at <strong>{approvedPendingIdUnit?.apartment_name}</strong>, cancelling will release the room back to Vacant and allow you to book another room immediately.
+            </p>
+
+            <form onSubmit={handleConfirmApprovedCancel} className="space-y-4 pt-1">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Reason for Declining: *
+                </label>
+                <select
+                  value={approvedCancelReason}
+                  onChange={(e) => setApprovedCancelReason(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none"
+                >
+                  <option value="Got another room">1. Got another room</option>
+                  <option value="Just changed mind">2. Just changed mind</option>
+                  <option value="Other reasons">3. Other reasons</option>
+                </select>
+              </div>
+
+              {approvedCancelReason === "Other reasons" && (
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs font-semibold text-slate-300">
+                      Specify reason (Max 100 characters):
+                    </label>
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      {customApprovedCancelText.length}/100
+                    </span>
+                  </div>
+                  <textarea
+                    rows={2}
+                    required
+                    maxLength={100}
+                    placeholder="e.g. Budget changed, decided to stay in current place..."
+                    value={customApprovedCancelText}
+                    onChange={(e) => setCustomApprovedCancelText(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none"
+                  />
+                </div>
+              )}
+
+              <div className="flex space-x-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowApprovedCancelModal(false)}
+                  className="flex-1 py-2.5 text-xs font-semibold text-slate-400 hover:text-white"
+                >
+                  Keep Booking
+                </button>
+                <button
+                  type="submit"
+                  disabled={cancellingApproved}
+                  className="flex-1 py-2.5 text-xs font-bold bg-red-500 hover:bg-red-400 text-white rounded-xl transition shadow-lg shadow-red-500/20"
+                >
+                  {cancellingApproved ? "Declining..." : "Decline & Release Room"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 3. VACATE MODAL */}
+      {showVacateModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <span>🚪</span> Request to Vacate Keja
+              </h3>
+              <button onClick={() => setShowVacateModal(false)} className="text-slate-400 hover:text-white text-sm">✕</button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Please indicate why you are vacating <strong>{assignedUnit?.door_number}</strong> at <strong>{assignedUnit?.apartment_name}</strong>.
+            </p>
+
+            <form onSubmit={handleConfirmVacate} className="space-y-4 pt-1">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Reason for Vacating: *</label>
+                <select
+                  value={vacateReason}
+                  onChange={(e) => setVacateReason(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none"
+                >
+                  <option value="Relocating">1. Relocating</option>
+                  <option value="High charges on rent / living conditions">2. High charges on rent / living conditions</option>
+                  <option value="Another reason">3. Another reason</option>
+                </select>
+              </div>
+
+              {vacateReason === "Another reason" && (
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs font-semibold text-slate-300">Specify reason (Max 100 characters):</label>
+                    <span className="text-[10px] text-slate-500 font-mono">{customVacateText.length}/100</span>
+                  </div>
+                  <textarea
+                    rows={2}
+                    required
+                    maxLength={100}
+                    placeholder="e.g. Moving closer to campus, changing jobs..."
+                    value={customVacateText}
+                    onChange={(e) => setCustomVacateText(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none"
+                  />
+                </div>
+              )}
+
+              <div className="flex space-x-2 pt-2 border-t border-slate-800">
+                <button type="button" onClick={() => setShowVacateModal(false)} className="flex-1 py-2.5 text-xs font-semibold text-slate-400 hover:text-white">Cancel</button>
+                <button type="submit" disabled={submittingVacate} className="flex-1 py-2.5 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl transition shadow-lg">
+                  {submittingVacate ? "Sending..." : "Submit Vacate Request"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Main Content */}
       <main className="flex-1 max-w-5xl w-full mx-auto p-6 space-y-6">
-        {/* 1-CLICK INSTANT CANCEL PENDING BOOKING BANNER */}
+        
+        {/* PENDING BOOKING BANNER */}
         {myPendingBooking && (
           <div className="bg-amber-950/40 border border-amber-500/50 rounded-3xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
             <div className="flex items-start space-x-3">
@@ -703,15 +922,16 @@ export default function TenantDashboard() {
               </div>
             </div>
             <button
-              onClick={handleDirectCancelBooking}
-              className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/40 text-xs font-bold px-4 py-2.5 rounded-xl transition shrink-0"
+              type="button"
+              onClick={() => setShowCancelModal(true)}
+              className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/40 text-xs font-bold px-4 py-2.5 rounded-xl transition shrink-0 cursor-pointer"
             >
-              Cancel Request (1-Click) ✕
+              Cancel Request ✕
             </button>
           </div>
         )}
 
-        {/* CHECK-IN FORM (When Approved - Auto-allocates on submit!) */}
+        {/* CHECK-IN FORM WITH "FINALIZE" AND "DECLINE / CANCEL" */}
         {approvedPendingIdUnit && (
           <div className="bg-emerald-950/40 border-2 border-emerald-500 rounded-3xl p-6 shadow-2xl space-y-4">
             <div className="flex items-start space-x-3">
@@ -720,7 +940,7 @@ export default function TenantDashboard() {
                 <h3 className="text-lg font-bold text-emerald-400">Your Booking Was Approved!</h3>
                 <p className="text-xs text-slate-300 mt-0.5">
                   The landlord approved your request for <strong>{approvedPendingIdUnit.door_number}</strong> at{" "}
-                  <strong>{approvedPendingIdUnit.apartment_name}</strong>. Submit your Kenyan National ID Number and M-Pesa Code below to finalize and auto-allocate this unit to your account!
+                  <strong>{approvedPendingIdUnit.apartment_name}</strong>. Submit your Kenyan National ID Number and M-Pesa Code below to finalize, or decline the booking if you changed your mind.
                 </p>
               </div>
             </div>
@@ -750,11 +970,19 @@ export default function TenantDashboard() {
                 />
               </div>
 
-              <div className="sm:col-span-2 flex justify-end pt-2">
+              <div className="sm:col-span-2 flex flex-col sm:flex-row justify-end items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowApprovedCancelModal(true)}
+                  className="w-full sm:w-auto px-5 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/40 font-bold rounded-xl transition text-xs cursor-pointer"
+                >
+                  Decline / Cancel Booking ✕
+                </button>
+
                 <button
                   type="submit"
                   disabled={submittingCheckIn}
-                  className="w-full sm:w-auto px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl transition text-xs shadow-lg shadow-emerald-500/20"
+                  className="w-full sm:w-auto px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl transition text-xs shadow-lg shadow-emerald-500/20 cursor-pointer"
                 >
                   {submittingCheckIn ? "Allocating Unit..." : "Finalize & Auto-Allocate House"}
                 </button>
@@ -768,12 +996,13 @@ export default function TenantDashboard() {
           <div className="space-y-6">
             {assignedUnit ? (
               <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-6">
+                
                 {assignedUnit.vacate_status === "requested" && (
                   <div className="bg-amber-950/40 border border-amber-500/50 rounded-2xl p-4 flex items-start space-x-3">
                     <span className="text-2xl mt-0.5">⏳</span>
                     <div>
                       <h4 className="text-sm font-bold text-amber-400">Move-Out Request Under Review</h4>
-                      <p className="text-xs text-slate-300 mt-0.5">Awaiting landlord key handover instructions.</p>
+                      <p className="text-xs text-slate-300 mt-0.5">Reason: <em>"{assignedUnit.vacate_reason}"</em>.</p>
                     </div>
                   </div>
                 )}
@@ -800,16 +1029,6 @@ export default function TenantDashboard() {
                   </div>
                 )}
 
-                {assignedUnit.vacate_status === "keys_handed_over" && (
-                  <div className="bg-emerald-950/40 border border-emerald-500/40 rounded-2xl p-4 flex items-center space-x-3">
-                    <span className="text-2xl">✅</span>
-                    <div>
-                      <h4 className="text-sm font-bold text-emerald-400">Keys Handover Confirmed!</h4>
-                      <p className="text-xs text-slate-300">Awaiting landlord final departure release.</p>
-                    </div>
-                  </div>
-                )}
-
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-800 pb-4 gap-4">
                   <div>
                     <span className="text-xs text-emerald-400 font-bold uppercase">Active Lease</span>
@@ -826,8 +1045,9 @@ export default function TenantDashboard() {
 
                     {!assignedUnit.vacate_status && (
                       <button
-                        onClick={handleInitiateVacate}
-                        className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold px-4 py-2.5 rounded-xl transition"
+                        type="button"
+                        onClick={() => setShowVacateModal(true)}
+                        className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold px-4 py-2.5 rounded-xl transition cursor-pointer"
                       >
                         Request to Vacate 🚪
                       </button>
@@ -841,9 +1061,9 @@ export default function TenantDashboard() {
                     <span className="text-lg font-bold text-blue-400">{assignedUnit.door_number}</span>
                   </div>
                   <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800">
-                    <span className="text-xs text-slate-500 block">Rent Status</span>
-                    <span className={`text-base font-bold ${hasPaidRent ? "text-emerald-400" : "text-amber-400"}`}>
-                      {hasPaidRent ? "✅ Cleared / Paid" : "⏳ Unpaid Balance"}
+                    <span className="text-xs text-slate-500 block">Verified National ID</span>
+                    <span className="text-lg font-bold font-mono text-emerald-400">
+                      {tenantProfile?.id_number || "Verified"}
                     </span>
                   </div>
                   <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800">
@@ -931,17 +1151,20 @@ export default function TenantDashboard() {
                       <span className="text-base font-extrabold text-white">KES {Number(house.monthly_rent).toLocaleString()}</span>
                       
                       <div className="flex items-center space-x-2">
+                        {/* 📷 PHOTOS & TOUR BUTTON */}
                         <button
+                          type="button"
                           onClick={() => setViewingHousePhotos(house)}
-                          className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold px-3 py-2 rounded-xl border border-slate-700 transition"
+                          className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold px-3 py-2 rounded-xl border border-slate-700 transition cursor-pointer"
                         >
                           📷 Photos & Tour
                         </button>
 
                         <button
+                          type="button"
                           onClick={() => handleBookRoom(house)}
                           disabled={isPending || Boolean(assignedUnit) || Boolean(myPendingBooking) || Boolean(approvedPendingIdUnit)}
-                          className="bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white text-xs font-bold px-4 py-2 rounded-xl transition"
+                          className="bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white text-xs font-bold px-4 py-2 rounded-xl transition cursor-pointer"
                         >
                           {isPending ? "Reserved" : "Book Room"}
                         </button>
@@ -954,27 +1177,10 @@ export default function TenantDashboard() {
           </div>
         )}
 
-        {/* TAB 3: CLICKABLE NOTIFICATIONS */}
+        {/* TAB 3: NOTIFICATIONS */}
         {activeTab === "notifications" && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-bold">Your eBoma In-App Alerts</h2>
-                <p className="text-xs text-slate-400">Click any approval alert to open your check-in!</p>
-              </div>
-              {notifications.length > 0 && (
-                <button
-                  onClick={async () => {
-                    await supabase.from("notifications").delete().eq("user_id", currentTenant.id);
-                    setNotifications([]);
-                  }}
-                  className="text-xs bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-xl font-semibold transition"
-                >
-                  Clear All Alerts ✕
-                </button>
-              )}
-            </div>
-
+            <h2 className="text-base font-bold">Your eBoma In-App Alerts</h2>
             {notifications.length === 0 ? (
               <div className="text-center py-16 bg-slate-900 border border-slate-800 rounded-3xl">
                 <span className="text-4xl block mb-2">🔕</span>
@@ -983,19 +1189,10 @@ export default function TenantDashboard() {
             ) : (
               <div className="space-y-3">
                 {notifications.map((n) => (
-                  <div
-                    key={n.id}
-                    onClick={() => handleNotificationClick(n)}
-                    className="bg-slate-900 border border-slate-800 hover:border-blue-500/60 rounded-2xl p-4 space-y-1 transition cursor-pointer group"
-                  >
+                  <div key={n.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-sm font-bold text-blue-400 group-hover:text-blue-300 flex items-center gap-1.5">
-                        <span>{n.title}</span>
-                        <span className="text-xs opacity-60">➔ Click to open</span>
-                      </h4>
-                      <span className="text-[10px] text-slate-500 font-mono">
-                        {new Date(n.created_at).toLocaleString()}
-                      </span>
+                      <h4 className="text-sm font-bold text-blue-400">{n.title}</h4>
+                      <span className="text-[10px] text-slate-500 font-mono">{new Date(n.created_at).toLocaleString()}</span>
                     </div>
                     <p className="text-xs text-slate-200 leading-relaxed pt-1">{n.message}</p>
                   </div>
