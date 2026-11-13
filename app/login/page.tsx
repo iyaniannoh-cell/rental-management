@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import Logo from "@/components/Logo";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,25 +20,21 @@ export default function LoginPage() {
     setErrorMsg("");
 
     try {
-      // 1. Sign in with Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim().toLowerCase(),
         password,
       });
 
       if (authError) throw authError;
 
       if (authData.user) {
-        // 2. Fetch user's role (landlord or tenant) from the database
-        const { data: profile, error: profileError } = await supabase
+        // Query user role
+        const { data: profile } = await supabase
           .from("profiles")
           .select("role")
           .eq("id", authData.user.id)
           .single();
 
-        if (profileError) throw profileError;
-
-        // 3. Automatically redirect to the correct dashboard!
         if (profile?.role === "landlord") {
           router.push("/dashboard/landlord");
         } else {
@@ -52,59 +49,75 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-900 text-white flex flex-col justify-center items-center px-4 py-12">
-      <div className="w-full max-w-md bg-slate-800/80 border border-slate-700/60 rounded-2xl p-8 shadow-xl">
-        <div className="text-center mb-8">
-          <Link href="/" className="inline-block text-emerald-400 text-sm font-medium mb-3 hover:underline">
-            ← Back to Home
-          </Link>
-          <h1 className="text-2xl font-bold">Welcome Back</h1>
-          <p className="text-slate-400 text-sm mt-1">Sign in to your rental portal</p>
+    <main
+      className="min-h-screen flex flex-col justify-center items-center px-4 py-12 relative overflow-hidden bg-cover bg-center"
+      style={{
+        backgroundImage: `url('https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1920&q=85')`,
+      }}
+    >
+      {/* Dark Glass Shade Overlay for contrast & readability */}
+      <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm z-0"></div>
+
+      {/* Main Login Card */}
+      <div className="w-full max-w-md bg-slate-900/90 border border-slate-700/80 rounded-3xl p-8 shadow-2xl space-y-6 relative z-10 backdrop-blur-md">
+        <div className="text-center">
+          <div className="flex justify-center mb-4">
+            <Link href="/">
+              <Logo size="sm" />
+            </Link>
+          </div>
+          <h1 className="text-2xl font-black text-white tracking-tight">Welcome Back</h1>
+          <p className="text-slate-400 text-xs mt-1">Sign in to your eBoma rental portal</p>
         </div>
 
         {errorMsg && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3 rounded-lg mb-4">
+          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs p-3.5 rounded-xl font-medium">
             {errorMsg}
           </div>
         )}
 
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">Email Address</label>
+            <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
             <input
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="name@example.com"
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+              className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">Password</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold text-slate-300">Password</label>
+              <Link href="/forgot-password" className="text-xs font-semibold text-emerald-400 hover:underline">
+                Forgot Password?
+              </Link>
+            </div>
             <input
               type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter your password"
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+              className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 rounded-lg font-bold text-sm bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition mt-6 disabled:opacity-50"
+            className="w-full py-3.5 rounded-xl font-bold text-sm bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition shadow-lg shadow-emerald-500/20 disabled:opacity-50 mt-2 cursor-pointer"
           >
-            {loading ? "Signing in..." : "Sign In"}
+            {loading ? "Signing in..." : "Sign In to eBoma"}
           </button>
         </form>
 
-        <p className="text-center text-xs text-slate-400 mt-6">
+        <p className="text-center text-xs text-slate-400 pt-3 border-t border-slate-800">
           Don't have an account yet?{" "}
-          <Link href="/signup" className="text-emerald-400 hover:underline">
+          <Link href="/signup" className="text-emerald-400 font-bold hover:underline">
             Create an Account
           </Link>
         </p>
