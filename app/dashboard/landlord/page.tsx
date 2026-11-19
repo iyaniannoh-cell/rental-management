@@ -14,6 +14,10 @@ interface Unit {
   monthly_rent: number;
   description: string;
   media_urls?: string[];
+  claim_code?: string;
+  assigned_tenant_name?: string;
+  assigned_tenant_phone?: string;
+  assigned_tenant_id_number?: string;
   is_vacant: boolean;
   booking_status: string;
   lease_completed: boolean;
@@ -34,7 +38,6 @@ interface Unit {
 export default function LandlordDashboard() {
   const router = useRouter();
 
-  // Theme state
   const [theme, setTheme] = useState<"light" | "dark">("light");
 
   const [currentLandlord, setCurrentLandlord] = useState<any>(null);
@@ -44,24 +47,27 @@ export default function LandlordDashboard() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Active top tab
   const [activeTab, setActiveTab] = useState<"portfolio" | "requests" | "vacate" | "notifications">("portfolio");
-
-  // NEW: Filter states for cleaner UX
   const [selectedApartmentFilter, setSelectedApartmentFilter] = useState<string>("All");
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // NEW: Slide-Over Tenant Dossier Drawer
   const [selectedTenantDossier, setSelectedTenantDossier] = useState<Unit | null>(null);
 
-  // Profile Modal
+  // Profile Modal State
   const [showProfile, setShowProfile] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editAvatarUrl, setEditAvatarUrl] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
+
+  // Manual Tenant Onboarding Modal State
+  const [onboardingUnit, setOnboardingUnit] = useState<Unit | null>(null);
+  const [onboardName, setOnboardName] = useState("");
+  const [onboardPhone, setOnboardPhone] = useState("");
+  const [onboardId, setOnboardId] = useState("");
+  const [submittingOnboard, setSubmittingOnboard] = useState(false);
 
   // Key Surrender Request Modal
   const [selectedVacateUnit, setSelectedVacateUnit] = useState<Unit | null>(null);
@@ -111,7 +117,6 @@ export default function LandlordDashboard() {
     }
     setCurrentLandlord(user);
 
-    // Profile
     const { data: prof } = await supabase
       .from("profiles")
       .select("*")
@@ -124,19 +129,16 @@ export default function LandlordDashboard() {
       setEditAvatarUrl(prof.avatar_url || "");
     }
 
-    // Units
     const { data: unitsData } = await supabase
       .from("units")
       .select("*")
       .eq("landlord_id", user.id)
       .order("created_at", { ascending: false });
 
-    // Profiles
     const { data: profilesData } = await supabase
       .from("profiles")
       .select("id, full_name, phone, id_number");
 
-    // Notifications
     const { data: notifData } = await supabase
       .from("notifications")
       .select("*")
@@ -144,7 +146,6 @@ export default function LandlordDashboard() {
       .order("created_at", { ascending: false });
     setNotifications(notifData || []);
 
-    // Payments
     const { data: paymentsData } = await supabase
       .from("payments")
       .select("*")
@@ -177,6 +178,10 @@ export default function LandlordDashboard() {
         monthly_rent: Number(u.monthly_rent),
         description: u.description || "",
         media_urls: u.media_urls || [],
+        claim_code: u.claim_code,
+        assigned_tenant_name: u.assigned_tenant_name,
+        assigned_tenant_phone: u.assigned_tenant_phone,
+        assigned_tenant_id_number: u.assigned_tenant_id_number,
         is_vacant: u.is_vacant ?? true,
         booking_status: u.booking_status || "vacant",
         lease_completed: u.lease_completed || false,
@@ -187,11 +192,17 @@ export default function LandlordDashboard() {
         tenant_id: u.tenant_id,
         tenant_name: u.booking_status === "pending" && pendingTenant
           ? pendingTenant.full_name
-          : tenant ? tenant.full_name : "Vacant",
+          : tenant
+          ? tenant.full_name
+          : u.assigned_tenant_name
+          ? `${u.assigned_tenant_name} (Awaiting Sign-up)`
+          : "Vacant",
         tenant_phone: u.booking_status === "pending" && pendingTenant
           ? pendingTenant.phone
-          : tenant ? tenant.phone : "-",
-        tenant_id_number: tenant?.id_number || pendingTenant?.id_number || "Not Provided",
+          : tenant
+          ? tenant.phone
+          : u.assigned_tenant_phone || "-",
+        tenant_id_number: tenant?.id_number || u.assigned_tenant_id_number || "Not Provided",
         mpesa_code: u.mpesa_code || "-",
         last_paid_date: lastPayment ? lastPayment.payment_date : "Never",
         payment_status: status,
@@ -208,7 +219,43 @@ export default function LandlordDashboard() {
     router.push("/");
   };
 
-  // Convert uploaded image files to base64 Data URLs
+  // SUBMIT MANUAL TENANT ONBOARDING (Binds details + Generates Code!)
+  const handleSaveManualOnboarding = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onboardingUnit || !onboardName.trim() || !onboardPhone.trim()) return;
+
+    setSubmittingOnboard(true);
+    const randomDigits = Math.floor(1000 + Math.random() * 9000);
+    const newCode = `EB-${randomDigits}`;
+
+    try {
+      const { error } = await supabase
+        .from("units")
+        .update({
+          claim_code: newCode,
+          assigned_tenant_name: onboardName.trim(),
+          assigned_tenant_phone: onboardPhone.trim(),
+          assigned_tenant_id_number: onboardId.trim(),
+        })
+        .eq("id", onboardingUnit.id);
+
+      if (error) throw error;
+
+      navigator.clipboard.writeText(newCode);
+
+      alert(`Tenant ${onboardName} assigned to ${onboardingUnit.door_number}!\n\nAllocation Code: ${newCode} (Copied to clipboard!)\n\nSend this code to the tenant. When they register on eBoma, their details will auto-fill automatically!`);
+      setOnboardingUnit(null);
+      setOnboardName("");
+      setOnboardPhone("");
+      setOnboardId("");
+      await checkUserAndFetch();
+    } catch (err: any) {
+      alert("Error: " + err.message);
+    } finally {
+      setSubmittingOnboard(false);
+    }
+  };
+
   const handlePhotoFilesSelected = (e: React.ChangeEvent<HTMLInputElement>, isModal = false) => {
     const files = e.target.files;
     if (!files) return;
@@ -251,7 +298,7 @@ export default function LandlordDashboard() {
       setManagingPhotosApartment(null);
       await checkUserAndFetch();
     } catch (err: any) {
-      alert("Error: " + err.message);
+      alert("Error saving photos: " + err.message);
     } finally {
       setSavingApartmentPhotos(false);
     }
@@ -292,7 +339,6 @@ export default function LandlordDashboard() {
     }
   };
 
-  // Quick Action: Send 7-Day Due Reminder to a specific tenant
   const handleSendReminderToTenant = async (unit: Unit) => {
     if (!unit.tenant_id) return;
     try {
@@ -309,7 +355,6 @@ export default function LandlordDashboard() {
     }
   };
 
-  // Quick Action: Toggle Paid / Unpaid
   const handleTogglePayment = async (unit: Unit) => {
     if (!unit.tenant_id) return;
     try {
@@ -382,6 +427,10 @@ export default function LandlordDashboard() {
           pending_tenant_id: null,
           lease_completed: false,
           mpesa_code: null,
+          claim_code: null,
+          assigned_tenant_name: null,
+          assigned_tenant_phone: null,
+          assigned_tenant_id_number: null,
           vacate_status: null,
           vacate_reason: null,
           vacate_conditions: null,
@@ -494,7 +543,7 @@ export default function LandlordDashboard() {
       alert(`Booking for ${unit.door_number} approved! Tenant notified.`);
       await checkUserAndFetch();
     } catch (err: any) {
-      alert("Error: " + err.message);
+      alert("Error approving booking: " + err.message);
     }
   };
 
@@ -528,10 +577,8 @@ export default function LandlordDashboard() {
     }
   };
 
-  // Distinct apartment names
   const distinctApartments = Array.from(new Set(units.map((u) => u.apartment_name)));
 
-  // Filtered units based on: Apartment Dropdown, Payment Pill, and Search Query
   const filteredUnits = units.filter((u) => {
     const matchesApt = selectedApartmentFilter === "All" || u.apartment_name === selectedApartmentFilter;
     const matchesPayment =
@@ -551,12 +598,12 @@ export default function LandlordDashboard() {
       !searchQuery.trim() ||
       u.door_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
       u.tenant_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.apartment_name.toLowerCase().includes(searchQuery.toLowerCase());
+      u.apartment_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (u.claim_code && u.claim_code.toLowerCase().includes(searchQuery.toLowerCase()));
 
     return matchesApt && matchesPayment && matchesSearch;
   });
 
-  // Pill counts
   const totalCount = units.length;
   const paidCount = units.filter((u) => u.payment_status === "Paid").length;
   const dueSoonCount = units.filter((u) => u.payment_status === "Due in 7 Days").length;
@@ -639,7 +686,7 @@ export default function LandlordDashboard() {
           </button>
         </div>
 
-        {/* Right Section: Add Door, Theme Toggle ☀️/🌙, Profile Avatar, and Logout */}
+        {/* Right Section */}
         <div className="flex items-center space-x-2.5">
           <button
             type="button"
@@ -693,14 +740,94 @@ export default function LandlordDashboard() {
         </div>
       </header>
 
-      {/* NEW: TENANT DOSSIER SLIDE-OVER DRAWER (FULL STORY & ACTIONS) */}
+      {/* MANUAL ONBOARD TENANT MODAL (BINDS TENANT DETAILS & GENERATES CODE!) */}
+      {onboardingUnit && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <span>👤</span> Onboard Tenant to {onboardingUnit.door_number}
+                </h3>
+                <p className="text-xs text-slate-400">{onboardingUnit.apartment_name} • KES {onboardingUnit.monthly_rent.toLocaleString()}/mo</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOnboardingUnit(null)}
+                className="text-slate-400 hover:text-white text-sm cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveManualOnboarding} className="space-y-3.5 pt-1">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Tenant Full Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. John Kamau"
+                  value={onboardName}
+                  onChange={(e) => setOnboardName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Phone Number *</label>
+                <input
+                  type="tel"
+                  required
+                  placeholder="e.g. +254 700 000000"
+                  value={onboardPhone}
+                  onChange={(e) => setOnboardPhone(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Kenyan National ID Number (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 34567890"
+                  value={onboardId}
+                  onChange={(e) => setOnboardId(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-xl text-[11px] text-blue-300 leading-relaxed">
+                ℹ️ When you click save, an automated <strong>Allocation Code (e.g. EB-4892)</strong> will be created and copied to your clipboard. Share it with this tenant—when they sign up on eBoma, their name, phone, and ID will <strong>auto-fill instantly</strong>!
+              </div>
+
+              <div className="flex space-x-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setOnboardingUnit(null)}
+                  className="flex-1 py-2.5 text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingOnboard}
+                  className="flex-1 py-2.5 text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl transition shadow-lg shadow-emerald-500/20 cursor-pointer"
+                >
+                  {submittingOnboard ? "Assigning..." : "Assign & Get Code ➔"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* TENANT DOSSIER SLIDE-OVER DRAWER */}
       {selectedTenantDossier && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex justify-end">
           <div className={`w-full max-w-md h-full shadow-2xl p-6 flex flex-col justify-between overflow-y-auto animate-in slide-in-from-right duration-300 ${
             isDark ? "bg-slate-900 text-white border-l border-slate-800" : "bg-white text-slate-900 border-l border-slate-200"
           }`}>
             <div>
-              {/* Header */}
               <div className="flex items-center justify-between border-b pb-4 mb-6">
                 <div>
                   <span className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider">Tenant Profile & Lease Story</span>
@@ -709,7 +836,7 @@ export default function LandlordDashboard() {
                 <button
                   type="button"
                   onClick={() => setSelectedTenantDossier(null)}
-                  className="w-8 h-8 rounded-full bg-slate-800/20 hover:bg-slate-800/40 flex items-center justify-center text-sm font-bold"
+                  className="w-8 h-8 rounded-full bg-slate-800/20 hover:bg-slate-800/40 flex items-center justify-center text-sm font-bold cursor-pointer"
                 >
                   ✕
                 </button>
@@ -726,6 +853,12 @@ export default function LandlordDashboard() {
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-slate-400">Monthly Rent:</span>
                   <span className="text-sm font-extrabold">KES {selectedTenantDossier.monthly_rent.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-slate-400">Allocation Code:</span>
+                  <span className="text-xs font-mono font-bold bg-blue-500/10 text-blue-400 px-2.5 py-0.5 rounded-full border border-blue-500/30">
+                    {selectedTenantDossier.claim_code || "Not generated"}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-slate-400">Payment Status:</span>
@@ -764,7 +897,7 @@ export default function LandlordDashboard() {
                 </div>
               </div>
 
-              {/* Payment History Log for this tenant */}
+              {/* Payment History */}
               <div className="space-y-3 mb-6">
                 <h4 className="text-xs font-bold uppercase text-slate-400">Payment Track Record</h4>
                 <div className="space-y-2 max-h-48 overflow-y-auto">
@@ -789,7 +922,7 @@ export default function LandlordDashboard() {
               </div>
             </div>
 
-            {/* Quick Actions at Bottom of Dossier */}
+            {/* Quick Actions */}
             <div className="space-y-2 pt-4 border-t">
               <button
                 type="button"
@@ -820,15 +953,14 @@ export default function LandlordDashboard() {
       {/* Main Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
 
-        {/* TAB 4: MY PROPERTIES & RENT (THE NEW CLEAN DASHBOARD!) */}
+        {/* TAB: MY PROPERTIES & RENT */}
         {activeTab === "portfolio" && (
           <div className="space-y-6">
 
-            {/* TOP COMMAND BAR: APARTMENT SELECTOR + SEARCH + PHOTO MANAGER BUTTONS */}
+            {/* TOP COMMAND BAR */}
             <div className={`p-5 rounded-3xl border shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 ${
               isDark ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
             }`}>
-              {/* Left: Building Dropdown Switcher */}
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1">
                 <div className="w-full sm:w-64">
                   <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
@@ -850,14 +982,13 @@ export default function LandlordDashboard() {
                   </select>
                 </div>
 
-                {/* Search Bar */}
                 <div className="flex-1">
                   <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                    Quick Search (Door, Tenant, Estate)
+                    Quick Search (Door, Tenant, Code)
                   </label>
                   <input
                     type="text"
-                    placeholder="Search by door or tenant name..."
+                    placeholder="Search door, tenant, or allocation code..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className={`w-full p-2.5 rounded-xl text-xs border focus:outline-none ${
@@ -867,7 +998,6 @@ export default function LandlordDashboard() {
                 </div>
               </div>
 
-              {/* Right: Manage Photos Shortcuts */}
               {distinctApartments.length > 0 && (
                 <div className="flex items-center gap-2 pt-1 md:pt-4 overflow-x-auto">
                   <span className="text-[10px] text-slate-400 font-bold uppercase hidden lg:inline">Photos:</span>
@@ -887,7 +1017,7 @@ export default function LandlordDashboard() {
               )}
             </div>
 
-            {/* 1-CLICK PAYMENT FILTER PILLS (FASTEST MORNING GLANCE!) */}
+            {/* 1-CLICK PAYMENT FILTER PILLS */}
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
               <button
                 type="button"
@@ -950,7 +1080,7 @@ export default function LandlordDashboard() {
               </button>
             </div>
 
-            {/* MASTER RENT & TENANTS LIST (CLEAN, SCANNABLE, CLICKABLE FOR FULL STORY) */}
+            {/* MASTER RENT & TENANTS LIST */}
             <div className={`border rounded-3xl p-6 shadow-sm ${
               isDark ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
             }`}>
@@ -980,20 +1110,19 @@ export default function LandlordDashboard() {
                         <th className="px-4 py-3">Rent / Mo</th>
                         <th className="px-4 py-3">Status</th>
                         <th className="px-4 py-3">Occupant</th>
-                        <th className="px-4 py-3">Phone</th>
-                        <th className="px-4 py-3 rounded-r-xl text-right">Story & Actions</th>
+                        <th className="px-4 py-3">Onboard / Code</th>
+                        <th className="px-4 py-3 rounded-r-xl text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className={`divide-y ${isDark ? "divide-slate-800" : "divide-slate-100"}`}>
                       {filteredUnits.map((unit) => (
                         <tr
                           key={unit.id}
-                          onClick={() => setSelectedTenantDossier(unit)}
-                          className={`transition cursor-pointer ${
+                          className={`transition ${
                             isDark ? "hover:bg-slate-800/40" : "hover:bg-slate-50"
                           }`}
                         >
-                          <td className="px-4 py-3.5">
+                          <td className="px-4 py-3.5 cursor-pointer" onClick={() => setSelectedTenantDossier(unit)}>
                             <div className="font-bold">{unit.door_number}</div>
                             <div className="text-xs text-slate-400">{unit.apartment_name}</div>
                           </td>
@@ -1012,12 +1141,49 @@ export default function LandlordDashboard() {
                               {unit.is_vacant ? "🟢 Vacant" : unit.payment_status}
                             </span>
                           </td>
-                          <td className="px-4 py-3.5 text-xs font-bold">{unit.tenant_name}</td>
-                          <td className="px-4 py-3.5 text-xs text-slate-400">{unit.tenant_phone}</td>
+                          <td className="px-4 py-3.5 text-xs font-bold cursor-pointer" onClick={() => setSelectedTenantDossier(unit)}>
+                            {unit.tenant_name}
+                          </td>
+
+                          {/* ONBOARD TENANT / ALLOCATION CODE BUTTON */}
+                          <td className="px-4 py-3.5">
+                            {unit.claim_code ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(unit.claim_code!);
+                                  alert(`Code ${unit.claim_code} copied to clipboard! Share it with the tenant via WhatsApp/SMS.`);
+                                }}
+                                className="text-xs font-mono font-bold bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer"
+                                title="Click to copy code"
+                              >
+                                <span>🔑 {unit.claim_code}</span>
+                                <span className="text-[10px] opacity-70">📋</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOnboardingUnit(unit);
+                                  setOnboardName("");
+                                  setOnboardPhone("");
+                                  setOnboardId("");
+                                }}
+                                className="text-[11px] font-bold text-emerald-400 hover:text-white bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                              >
+                                + Onboard Tenant
+                              </button>
+                            )}
+                          </td>
+
                           <td className="px-4 py-3.5 text-right">
-                            <span className="text-xs font-bold text-emerald-500 hover:underline">
-                              👤 View Dossier ➔
-                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTenantDossier(unit)}
+                              className="text-xs font-bold text-emerald-500 hover:underline cursor-pointer"
+                            >
+                              👤 Dossier ➔
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -1029,7 +1195,7 @@ export default function LandlordDashboard() {
           </div>
         )}
 
-        {/* UPLOAD FORM (MODAL/DRAWER ACCESSIBLE FROM ANYWHERE) */}
+        {/* UPLOAD FORM */}
         {isAddingUnit && (
           <form onSubmit={handleSaveUnits} className={`border rounded-3xl p-6 shadow-2xl space-y-5 animate-in fade-in ${
             isDark ? "bg-slate-900 border-emerald-500/50" : "bg-white border-slate-200"
@@ -1165,9 +1331,9 @@ export default function LandlordDashboard() {
                       <div className={`p-3.5 rounded-2xl border mt-4 space-y-1.5 text-xs ${
                         isDark ? "bg-slate-950 border-slate-800" : "bg-slate-50 border-slate-200"
                       }`}>
-                        <div><span className="text-slate-400">Tenant: </span><span className="font-bold">{req.tenant_name}</span></div>
-                        <div><span className="text-slate-400">Phone: </span><span>📞 {req.tenant_phone}</span></div>
-                        <div><span className="text-slate-400">National ID: </span><span className="font-mono text-emerald-600 font-bold">{req.tenant_id_number}</span></div>
+                        <div><span className={isDark ? "text-slate-400" : "text-slate-500"}>Tenant: </span><span className="font-bold">{req.tenant_name}</span></div>
+                        <div><span className={isDark ? "text-slate-400" : "text-slate-500"}>Phone: </span><span>📞 {req.tenant_phone}</span></div>
+                        <div><span className={isDark ? "text-slate-400" : "text-slate-500"}>National ID: </span><span className="font-mono text-emerald-600 font-bold">{req.tenant_id_number}</span></div>
                         <div className="pt-1 border-t">
                           <span className="text-amber-500 font-semibold">Vacate Reason: </span>
                           <span className="italic">"{req.vacate_reason}"</span>
@@ -1225,9 +1391,7 @@ export default function LandlordDashboard() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {pendingRequests.map((req) => (
-                    <div key={req.id} className={`border rounded-3xl p-5 space-y-4 shadow-sm ${
-                      isDark ? "bg-slate-900 border-amber-500/50" : "bg-white border-slate-200"
-                    }`}>
+                    <div key={req.id} className="border rounded-3xl p-5 space-y-4 shadow-sm bg-slate-900 border-amber-500/50">
                       <div className="flex items-start justify-between">
                         <div>
                           <span className="text-xs uppercase tracking-wider text-amber-500 font-bold">New Booking Inquiry</span>
@@ -1236,11 +1400,9 @@ export default function LandlordDashboard() {
                         </div>
                       </div>
 
-                      <div className={`p-3.5 rounded-2xl border space-y-1 text-xs ${
-                        isDark ? "bg-slate-950 border-slate-800" : "bg-slate-50 border-slate-200"
-                      }`}>
-                        <div>Applicant: <span className="font-bold">{req.tenant_name}</span></div>
-                        <div>Phone: <span>📞 {req.tenant_phone}</span></div>
+                      <div className="p-3.5 rounded-2xl border space-y-1 text-xs bg-slate-950 border-slate-800">
+                        <div>Applicant Name: <span className="font-bold">{req.tenant_name}</span></div>
+                        <div>Phone: <span className="font-medium">📞 {req.tenant_phone}</span></div>
                       </div>
 
                       <div className="flex space-x-2 pt-2 border-t">
@@ -1272,9 +1434,7 @@ export default function LandlordDashboard() {
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {approvedAwaitingCheckIn.map((req) => (
-                    <div key={req.id} className={`border rounded-3xl p-5 space-y-3 shadow-sm ${
-                      isDark ? "bg-slate-900 border-blue-500/40" : "bg-white border-slate-200"
-                    }`}>
+                    <div key={req.id} className="border rounded-3xl p-5 space-y-3 shadow-sm bg-slate-900 border-blue-500/40">
                       <div>
                         <span className="text-xs uppercase tracking-wider text-blue-500 font-bold">Approved - Awaiting Check-In</span>
                         <h4 className="text-base font-bold mt-0.5">{req.apartment_name} - {req.door_number}</h4>
@@ -1301,7 +1461,7 @@ export default function LandlordDashboard() {
           </div>
         )}
 
-        {/* TAB 3: ALERTS */}
+        {/* TAB 3: NOTIFICATIONS */}
         {activeTab === "notifications" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -1313,7 +1473,7 @@ export default function LandlordDashboard() {
                 <button
                   type="button"
                   onClick={handleClearAllNotifications}
-                  className="text-xs bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 px-3 py-1.5 rounded-xl font-semibold transition"
+                  className="text-xs bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 px-3 py-1.5 rounded-xl font-semibold transition cursor-pointer"
                 >
                   Clear All Alerts ✕
                 </button>
@@ -1333,7 +1493,7 @@ export default function LandlordDashboard() {
                   <div
                     key={n.id}
                     onClick={() => handleNotificationClick(n)}
-                    className="border rounded-2xl p-5 space-y-1 transition cursor-pointer group shadow-sm"
+                    className="border rounded-2xl p-5 space-y-1 transition cursor-pointer group shadow-sm bg-slate-900 border-slate-800 hover:border-emerald-500/60"
                   >
                     <div className="flex items-center justify-between">
                       <h4 className="text-sm font-bold text-emerald-600 flex items-center gap-1.5">
